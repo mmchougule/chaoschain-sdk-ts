@@ -278,11 +278,43 @@ export class ChaosChainSDK {
   }
 
   /**
-   * Get agent reputation score
+   * Get agent reputation score (ERC-8004 v1.0)
    */
-  async getReputationScore(_agentId: bigint): Promise<number> {
-    // TODO: Implement in ChaosAgent
-    return 0;
+  async getReputationScore(agentId: bigint): Promise<number> {
+    const summary = await this.chaosAgent.getSummary(agentId, [], ethers.ZeroHash, ethers.ZeroHash);
+    return summary.averageScore;
+  }
+
+  /**
+   * Read all feedback for an agent
+   */
+  async readAllFeedback(
+    agentId: bigint,
+    clientAddresses: string[] = [],
+    tag1: string = ethers.ZeroHash,
+    tag2: string = ethers.ZeroHash,
+    includeRevoked: boolean = false
+  ) {
+    return this.chaosAgent.readAllFeedback(agentId, clientAddresses, tag1, tag2, includeRevoked);
+  }
+
+  /**
+   * Get feedback summary statistics
+   */
+  async getFeedbackSummary(
+    agentId: bigint,
+    clientAddresses: string[] = [],
+    tag1: string = ethers.ZeroHash,
+    tag2: string = ethers.ZeroHash
+  ) {
+    return this.chaosAgent.getSummary(agentId, clientAddresses, tag1, tag2);
+  }
+
+  /**
+   * Get clients who gave feedback
+   */
+  async getClients(agentId: bigint): Promise<string[]> {
+    return this.chaosAgent.getClients(agentId);
   }
 
   // ============================================================================
@@ -290,21 +322,53 @@ export class ChaosChainSDK {
   // ============================================================================
 
   /**
-   * Request validation from validator
+   * Request validation from validator (ERC-8004 v1.0)
    */
-  async requestValidation(params: ValidationRequestParams): Promise<string> {
-    return this.chaosAgent.requestValidation(params);
+  async requestValidation(
+    validatorAddress: string,
+    agentId: bigint,
+    requestUri: string,
+    requestHash: string
+  ): Promise<string> {
+    return this.chaosAgent.requestValidation(validatorAddress, agentId, requestUri, requestHash);
   }
 
   /**
-   * Respond to validation request
+   * Respond to validation request (ERC-8004 v1.0)
    */
   async respondToValidation(
-    requestId: bigint,
-    approved: boolean,
-    responseUri: string
+    requestHash: string,
+    response: number,
+    responseUri: string,
+    responseHash: string,
+    tag?: string
   ): Promise<string> {
-    return this.chaosAgent.respondToValidation(requestId, approved, responseUri);
+    return this.chaosAgent.respondToValidation(requestHash, response, responseUri, responseHash, tag);
+  }
+
+  /**
+   * Get validation status
+   */
+  async getValidationStatus(requestHash: string) {
+    return this.chaosAgent.getValidationStatus(requestHash);
+  }
+
+  /**
+   * Get validation summary for an agent
+   */
+  async getValidationSummary(
+    agentId: bigint,
+    validatorAddresses: string[] = [],
+    tag: string = ethers.ZeroHash
+  ) {
+    return this.chaosAgent.getValidationSummary(agentId, validatorAddresses, tag);
+  }
+
+  /**
+   * Get validation stats (alias for getValidationSummary)
+   */
+  async getValidationStats(agentId: bigint) {
+    return this.getValidationSummary(agentId);
   }
 
   // ============================================================================
@@ -373,6 +437,45 @@ export class ChaosChainSDK {
       throw new Error('x402 payments not enabled');
     }
     return this.x402PaymentManager.getPaymentHistory(limit);
+  }
+
+  /**
+   * Calculate total cost including protocol fee (2.5%)
+   */
+  calculateTotalCost(
+    amount: string,
+    currency: string = 'USDC'
+  ): { amount: string; fee: string; total: string; currency: string } {
+    const amountNum = parseFloat(amount);
+    const fee = amountNum * 0.025; // 2.5% protocol fee
+    const total = amountNum + fee;
+
+    return {
+      amount: amountNum.toFixed(6),
+      fee: fee.toFixed(6),
+      total: total.toFixed(6),
+      currency,
+    };
+  }
+
+  /**
+   * Get ETH balance
+   */
+  async getETHBalance(): Promise<string> {
+    const balance = await this.provider.getBalance(this.getAddress());
+    return ethers.formatEther(balance);
+  }
+
+  /**
+   * Get USDC balance (if USDC contract exists on network)
+   */
+  async getUSDCBalance(): Promise<string> {
+    if (!this.x402PaymentManager) {
+      throw new Error('x402 payments not enabled - cannot get USDC balance');
+    }
+    // This would need USDC contract address for the network
+    // For now, return placeholder
+    return '0.0';
   }
 
   // ============================================================================

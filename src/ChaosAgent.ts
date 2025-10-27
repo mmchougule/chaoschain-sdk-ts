@@ -62,11 +62,18 @@ export class ChaosAgent {
     // Create metadata URI (JSON)
     const uri = metadata ? `data:application/json,${JSON.stringify(metadata)}` : '';
 
-    // Call registerAgent
-    const tx = await this.identityContract.registerAgent(uri);
+    // Call register with the appropriate overload
+    let tx;
+    if (uri) {
+      // Use register(string) overload
+      tx = await this.identityContract['register(string)'](uri);
+    } else {
+      // Use register() overload
+      tx = await this.identityContract['register()']();
+    }
     const receipt = await tx.wait();
 
-    // Parse AgentRegistered event
+    // Parse Registered event
     const event = receipt.logs
       .map((log: ethers.Log) => {
         try {
@@ -78,10 +85,10 @@ export class ChaosAgent {
           return null;
         }
       })
-      .find((e: ethers.LogDescription | null) => e?.name === 'AgentRegistered');
+      .find((e: ethers.LogDescription | null) => e?.name === 'Registered');
 
     if (!event) {
-      throw new Error('AgentRegistered event not found');
+      throw new Error('Registered event not found');
     }
 
     return {
@@ -96,7 +103,7 @@ export class ChaosAgent {
    */
   async getAgentMetadata(agentId: bigint): Promise<AgentMetadata | null> {
     try {
-      const uri = await this.identityContract.getAgentURI(agentId);
+      const uri = await this.identityContract.tokenURI(agentId);
       
       if (!uri) {
         return null;
@@ -132,7 +139,7 @@ export class ChaosAgent {
    * Set agent URI
    */
   async setAgentUri(agentId: bigint, uri: string): Promise<string> {
-    const tx = await this.identityContract.setAgentURI(agentId, uri);
+    const tx = await this.identityContract.setAgentUri(agentId, uri);
     const receipt = await tx.wait();
     return receipt.hash;
   }
@@ -242,77 +249,190 @@ export class ChaosAgent {
   }
 
   /**
-   * Give feedback to an agent
+   * Give feedback to an agent (ERC-8004 v1.0)
+   *
+   * @param params Feedback parameters including agentId, rating, feedbackUri, and optional auth
+   * @returns Transaction hash
    */
   async giveFeedback(params: FeedbackParams): Promise<string> {
-    const { agentId, rating, feedbackUri } = params;
+    const { agentId, rating, feedbackUri, feedbackData } = params;
 
     // Validate rating (0-100)
     if (rating < 0 || rating > 100) {
       throw new Error('Rating must be between 0 and 100');
     }
 
-    const tx = await this.reputationContract.giveFeedback(agentId, rating, feedbackUri);
+    // ERC-8004 v1.0 requires: (agentId, score, tag1, tag2, feedbackUri, feedbackHash, feedbackAuth)
+    const score = rating; // 0-100
+    const tag1 = feedbackData?.tag1 || ethers.ZeroHash; // bytes32
+    const tag2 = feedbackData?.tag2 || ethers.ZeroHash; // bytes32
+
+    // Calculate feedback hash
+    const feedbackContent = feedbackData?.content || feedbackUri;
+    const feedbackHash = ethers.keccak256(ethers.toUtf8Bytes(feedbackContent));
+
+    // Feedback auth (289 bytes: struct + signature)
+    // If not provided, use empty bytes (will work if no auth required or for self-feedback)
+    const feedbackAuth = feedbackData?.feedbackAuth || '0x';
+
+    const tx = await this.reputationContract.giveFeedback(
+      agentId,
+      score,
+      tag1,
+      tag2,
+      feedbackUri,
+      feedbackHash,
+      feedbackAuth
+    );
     const receipt = await tx.wait();
 
     return receipt.hash;
   }
 
   /**
-   * Revoke feedback
+   * Revoke feedback (ERC-8004 v1.0)
+   * @param agentId Agent ID that received the feedback
+   * @param feedbackIndex Index of the feedback to revoke (uint64)
    */
-  async revokeFeedback(feedbackId: bigint): Promise<string> {
-    const tx = await this.reputationContract.revokeFeedback(feedbackId);
+  async revokeFeedback(agentId: bigint, feedbackIndex: bigint): Promise<string> {
+    const tx = await this.reputationContract.revokeFeedback(agentId, feedbackIndex);
     const receipt = await tx.wait();
     return receipt.hash;
   }
 
   /**
-   * Append response to feedback
+   * Append response to feedback (ERC-8004 v1.0)
+   * @param agentId Agent ID that received the feedback
+   * @param clientAddress Address of the client who gave feedback
+   * @param feedbackIndex Index of the feedback
+   * @param responseUri URI containing the response data
+   * @param responseHash Hash of the response content
    */
-  async appendResponse(feedbackId: bigint, responseUri: string): Promise<string> {
-    const tx = await this.reputationContract.appendResponse(feedbackId, responseUri);
+  async appendResponse(
+    agentId: bigint,
+    clientAddress: string,
+    feedbackIndex: bigint,
+    responseUri: string,
+    responseHash: string
+  ): Promise<string> {
+    const tx = await this.reputationContract.appendResponse(
+      agentId,
+      clientAddress,
+      feedbackIndex,
+      responseUri,
+      responseHash
+    );
     const receipt = await tx.wait();
     return receipt.hash;
   }
 
   /**
-   * Get feedback details
+   * Read specific feedback (ERC-8004 v1.0)
+   * @param agentId Agent ID that received the feedback
+   * @param clientAddress Address of the client who gave feedback
+   * @param index Index of the feedback
    */
-  async getFeedback(feedbackId: bigint): Promise<FeedbackRecord> {
-    const feedback = await this.reputationContract.getFeedback(feedbackId);
-    
+  async readFeedback(
+    agentId: bigint,
+    clientAddress: string,
+    index: bigint
+  ): Promise<{
+    score: number;
+    tag1: string;
+    tag2: string;
+    isRevoked: boolean;
+  }> {
+    const feedback = await this.reputationContract.readFeedback(agentId, clientAddress, index);
     return {
-      feedbackId: feedback.feedbackId,
-      fromAgent: feedback.fromAgent,
-      toAgent: feedback.toAgent,
-      rating: feedback.rating,
-      feedbackUri: feedback.feedbackURI,
-      timestamp: Number(feedback.timestamp),
-      revoked: feedback.revoked,
+      score: Number(feedback.score),
+      tag1: feedback.tag1,
+      tag2: feedback.tag2,
+      isRevoked: feedback.isRevoked,
     };
   }
 
   /**
-   * Get agent feedback IDs
+   * Read all feedback for an agent (ERC-8004 v1.0)
+   * @param agentId Agent ID
+   * @param clientAddresses Array of client addresses (empty array for all clients)
+   * @param tag1 First tag filter (ZeroHash for no filter)
+   * @param tag2 Second tag filter (ZeroHash for no filter)
+   * @param includeRevoked Whether to include revoked feedback
    */
-  async getAgentFeedback(
+  async readAllFeedback(
     agentId: bigint,
-    offset: number = 0,
-    limit: number = 10
-  ): Promise<bigint[]> {
-    return this.reputationContract.getAgentFeedback(agentId, offset, limit);
+    clientAddresses: string[] = [],
+    tag1: string = ethers.ZeroHash,
+    tag2: string = ethers.ZeroHash,
+    includeRevoked: boolean = false
+  ): Promise<{
+    clients: string[];
+    scores: number[];
+    tag1s: string[];
+    tag2s: string[];
+    revokedStatuses: boolean[];
+  }> {
+    const result = await this.reputationContract.readAllFeedback(
+      agentId,
+      clientAddresses,
+      tag1,
+      tag2,
+      includeRevoked
+    );
+    return {
+      clients: result.clients,
+      scores: result.scores.map((s: bigint) => Number(s)),
+      tag1s: result.tag1s,
+      tag2s: result.tag2s,
+      revokedStatuses: result.revokedStatuses,
+    };
   }
 
   /**
-   * Get agent reputation stats
+   * Get summary statistics (ERC-8004 v1.0)
+   * @param agentId Agent ID
+   * @param clientAddresses Array of client addresses (empty array for all clients)
+   * @param tag1 First tag filter (ZeroHash for no filter)
+   * @param tag2 Second tag filter (ZeroHash for no filter)
    */
-  async getAgentStats(agentId: bigint): Promise<{
-    totalFeedback: bigint;
-    averageRating: bigint;
-    totalRevoked: bigint;
+  async getSummary(
+    agentId: bigint,
+    clientAddresses: string[] = [],
+    tag1: string = ethers.ZeroHash,
+    tag2: string = ethers.ZeroHash
+  ): Promise<{
+    count: bigint;
+    averageScore: number;
   }> {
-    return this.reputationContract.getAgentStats(agentId);
+    const result = await this.reputationContract.getSummary(agentId, clientAddresses, tag1, tag2);
+    return {
+      count: result.count,
+      averageScore: Number(result.averageScore),
+    };
+  }
+
+  /**
+   * Get list of clients who gave feedback
+   * @param agentId Agent ID
+   */
+  async getClients(agentId: bigint): Promise<string[]> {
+    return this.reputationContract.getClients(agentId);
+  }
+
+  /**
+   * Get last feedback index for a client
+   * @param agentId Agent ID
+   * @param clientAddress Client address
+   */
+  async getLastIndex(agentId: bigint, clientAddress: string): Promise<bigint> {
+    return this.reputationContract.getLastIndex(agentId, clientAddress);
+  }
+
+  /**
+   * Get identity registry address from reputation contract
+   */
+  async getIdentityRegistry(): Promise<string> {
+    return this.reputationContract.getIdentityRegistry();
   }
 
   // ============================================================================
@@ -320,16 +440,24 @@ export class ChaosAgent {
   // ============================================================================
 
   /**
-   * Request validation from another agent
+   * Request validation from a validator (ERC-8004 v1.0)
+   * @param validatorAddress Address of the validator
+   * @param agentId Agent ID requesting validation
+   * @param requestUri URI containing validation request data
+   * @param requestHash Hash of the request content (bytes32)
    */
-  async requestValidation(params: ValidationRequestParams): Promise<string> {
-    const { validatorAgentId, requestUri, requestHash } = params;
+  async requestValidation(
+    validatorAddress: string,
+    agentId: bigint,
+    requestUri: string,
+    requestHash: string
+  ): Promise<string> {
+    // Ensure requestHash is bytes32 format
+    const hashBytes = requestHash.startsWith('0x') ? requestHash : ethers.id(requestHash);
 
-    // Convert hash to bytes32
-    const hashBytes = ethers.id(requestHash);
-
-    const tx = await this.validationContract.requestValidation(
-      validatorAgentId,
+    const tx = await this.validationContract.validationRequest(
+      validatorAddress,
+      agentId,
       requestUri,
       hashBytes
     );
@@ -339,67 +467,108 @@ export class ChaosAgent {
   }
 
   /**
-   * Respond to validation request
+   * Respond to validation request (ERC-8004 v1.0)
+   * @param requestHash Hash of the original validation request (bytes32)
+   * @param response Response score (0-100, where 100 = approved)
+   * @param responseUri URI containing response data
+   * @param responseHash Hash of the response content (bytes32)
+   * @param tag Optional tag for categorization (bytes32)
    */
   async respondToValidation(
-    requestId: bigint,
-    approved: boolean,
-    responseUri: string
+    requestHash: string,
+    response: number,
+    responseUri: string,
+    responseHash: string,
+    tag: string = ethers.ZeroHash
   ): Promise<string> {
-    const tx = await this.validationContract.respondToValidation(
-      requestId,
-      approved,
-      responseUri
+    // Validate response (0-100)
+    if (response < 0 || response > 100) {
+      throw new Error('Response must be between 0 and 100');
+    }
+
+    // Ensure hashes are bytes32 format
+    const reqHashBytes = requestHash.startsWith('0x') ? requestHash : ethers.id(requestHash);
+    const resHashBytes = responseHash.startsWith('0x') ? responseHash : ethers.id(responseHash);
+    const tagBytes = tag.startsWith('0x') ? tag : ethers.ZeroHash;
+
+    const tx = await this.validationContract.validationResponse(
+      reqHashBytes,
+      response,
+      responseUri,
+      resHashBytes,
+      tagBytes
     );
     const receipt = await tx.wait();
     return receipt.hash;
   }
 
   /**
-   * Get validation request details
+   * Get validation status (ERC-8004 v1.0)
+   * @param requestHash Hash of the validation request (bytes32)
    */
-  async getValidationRequest(requestId: bigint): Promise<ValidationRequest> {
-    const request = await this.validationContract.getValidationRequest(requestId);
-
+  async getValidationStatus(requestHash: string): Promise<{
+    validatorAddress: string;
+    agentId: bigint;
+    response: number;
+    responseHash: string;
+    tag: string;
+    lastUpdate: bigint;
+  }> {
+    const hashBytes = requestHash.startsWith('0x') ? requestHash : ethers.id(requestHash);
+    const result = await this.validationContract.getValidationStatus(hashBytes);
     return {
-      requestId: request.requestId,
-      requester: request.requester,
-      validator: request.validator,
-      requestUri: request.requestURI,
-      requestHash: request.requestHash,
-      status: request.status as ValidationStatus,
-      responseUri: request.responseURI,
-      timestamp: Number(request.timestamp),
+      validatorAddress: result.validatorAddress,
+      agentId: result.agentId,
+      response: Number(result.response),
+      responseHash: result.responseHash,
+      tag: result.tag,
+      lastUpdate: result.lastUpdate,
     };
   }
 
   /**
-   * Get agent validation requests
+   * Get validation summary statistics (ERC-8004 v1.0)
+   * @param agentId Agent ID
+   * @param validatorAddresses Array of validator addresses (empty for all)
+   * @param tag Tag filter (ZeroHash for no filter)
    */
-  async getAgentValidationRequests(
+  async getValidationSummary(
     agentId: bigint,
-    asValidator: boolean = false,
-    offset: number = 0,
-    limit: number = 10
-  ): Promise<bigint[]> {
-    return this.validationContract.getAgentValidationRequests(
-      agentId,
-      asValidator,
-      offset,
-      limit
-    );
+    validatorAddresses: string[] = [],
+    tag: string = ethers.ZeroHash
+  ): Promise<{
+    count: bigint;
+    avgResponse: number;
+  }> {
+    const tagBytes = tag.startsWith('0x') ? tag : ethers.ZeroHash;
+    const result = await this.validationContract.getSummary(agentId, validatorAddresses, tagBytes);
+    return {
+      count: result.count,
+      avgResponse: Number(result.avgResponse),
+    };
   }
 
   /**
-   * Get validation statistics for an agent
+   * Get all validation request hashes for an agent
+   * @param agentId Agent ID
    */
-  async getValidationStats(agentId: bigint): Promise<{
-    totalRequested: bigint;
-    totalValidated: bigint;
-    totalApproved: bigint;
-    totalRejected: bigint;
-  }> {
-    return this.validationContract.getValidationStats(agentId);
+  async getAgentValidations(agentId: bigint): Promise<string[]> {
+    return this.validationContract.getAgentValidations(agentId);
+  }
+
+  /**
+   * Get all validation requests for a validator
+   * @param validatorAddress Validator address
+   */
+  async getValidatorRequests(validatorAddress: string): Promise<string[]> {
+    return this.validationContract.getValidatorRequests(validatorAddress);
+  }
+
+  /**
+   * Get identity registry address from validation contract
+   */
+  async getValidationIdentityRegistry(): Promise<string> {
+    return this.validationContract.getIdentityRegistry();
   }
 
   // ============================================================================
@@ -407,37 +576,69 @@ export class ChaosAgent {
   // ============================================================================
 
   /**
-   * Listen for AgentRegistered events
+   * Listen for Registered events
    */
   onAgentRegistered(callback: (agentId: bigint, owner: string, uri: string) => void): void {
-    this.identityContract.on('AgentRegistered', callback);
+    this.identityContract.on('Registered', callback);
   }
 
   /**
-   * Listen for FeedbackGiven events
+   * Listen for NewFeedback events (ERC-8004 v1.0)
    */
-  onFeedbackGiven(
-    callback: (feedbackId: bigint, fromAgent: bigint, toAgent: bigint, rating: number) => void
+  onNewFeedback(
+    callback: (
+      agentId: bigint,
+      clientAddress: string,
+      score: number,
+      tag1: string,
+      tag2: string,
+      feedbackUri: string,
+      feedbackHash: string
+    ) => void
   ): void {
-    this.reputationContract.on('FeedbackGiven', callback);
+    this.reputationContract.on('NewFeedback', callback);
   }
 
   /**
-   * Listen for ValidationRequested events
+   * Listen for ResponseAppended events (ERC-8004 v1.0)
    */
-  onValidationRequested(
-    callback: (requestId: bigint, requester: bigint, validator: bigint) => void
+  onResponseAppended(
+    callback: (
+      agentId: bigint,
+      clientAddress: string,
+      feedbackIndex: bigint,
+      responder: string,
+      responseUri: string,
+      responseHash: string
+    ) => void
   ): void {
-    this.validationContract.on('ValidationRequested', callback);
+    this.reputationContract.on('ResponseAppended', callback);
   }
 
   /**
-   * Listen for ValidationResponded events
+   * Listen for ValidationRequest events (ERC-8004 v1.0)
    */
-  onValidationResponded(
-    callback: (requestId: bigint, approved: boolean, responseUri: string) => void
+  onValidationRequest(
+    callback: (validatorAddress: string, agentId: bigint, requestUri: string, requestHash: string) => void
   ): void {
-    this.validationContract.on('ValidationResponded', callback);
+    this.validationContract.on('ValidationRequest', callback);
+  }
+
+  /**
+   * Listen for ValidationResponse events (ERC-8004 v1.0)
+   */
+  onValidationResponse(
+    callback: (
+      validatorAddress: string,
+      agentId: bigint,
+      requestHash: string,
+      response: number,
+      responseUri: string,
+      responseHash: string,
+      tag: string
+    ) => void
+  ): void {
+    this.validationContract.on('ValidationResponse', callback);
   }
 
   /**
