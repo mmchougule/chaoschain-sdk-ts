@@ -1,0 +1,93 @@
+{
+  "name": "@chaoschain/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for building verifiable AI agents on ChaosChain",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./providers/storage": {
+      "import": "./dist/providers/storage/index.mjs",
+      "require": "./dist/providers/storage/index.js",
+      "types": "./dist/providers/storage/index.d.ts"
+    },
+    "./providers/compute": {
+      "import": "./dist/providers/compute/index.mjs",
+      "require": "./dist/providers/compute/index.js",
+      "types": "./dist/providers/compute/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "format": "prettier --write src",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npm run test:run"
+  },
+  "keywords": [
+    "chaoschain",
+    "erc-8004",
+    "x402",
+    "ai-agents",
+    "blockchain",
+    "web3",
+    "autonomous-agents",
+    "crypto-payments",
+    "verifiable-ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChaosChain/chaoschain-sdk-ts.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "ethers": "^6.9.0",
+    "form-data": "^4.0.4",
+    "jose": "^6.1.0",
+    "zod": "^3.22.0"
+  },
+  "peerDependencies": {
+    "@irys/sdk": "^0.1.0",
+    "@pinata/sdk": "^2.1.0",
+    "ipfs-http-client": "^60.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@pinata/sdk": {
+      "optional": true
+    },
+    "@irys/sdk": {
+      "optional": true
+    },
+    "ipfs-http-client": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.23",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.57.1",
+    "prettier": "^3.6.2",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

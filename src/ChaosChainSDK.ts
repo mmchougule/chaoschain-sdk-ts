@@ -1,0 +1,598 @@
+/**
+ * ChaosChain SDK - Main Entry Point
+ * Production-ready SDK for building verifiable AI agents with complete feature parity to Python SDK
+ */
+
+import { ethers } from 'ethers';
+import { WalletManager } from './WalletManager';
+import { ChaosAgent } from './ChaosAgent';
+import { X402PaymentManager } from './X402PaymentManager';
+import { PaymentManager, PaymentMethodCredentials } from './PaymentManager';
+import { X402Server } from './X402Server';
+import { GoogleAP2Integration, GoogleAP2IntegrationResult } from './GoogleAP2Integration';
+import { A2AX402Extension } from './A2AX402Extension';
+import { ProcessIntegrity } from './ProcessIntegrity';
+import { AutoStorageManager, StorageBackend } from './StorageBackends';
+import { IPFSLocalStorage } from './providers/storage/IPFSLocal';
+import {
+  ChaosChainSDKConfig,
+  NetworkConfig,
+  AgentRole,
+  AgentMetadata,
+  AgentRegistration,
+  FeedbackParams,
+  ValidationRequestParams,
+  X402PaymentParams,
+  X402Payment,
+  StorageProvider,
+  UploadResult,
+  UploadOptions,
+  ComputeProvider,
+  PaymentMethod,
+} from './types';
+import { getNetworkInfo, getContractAddresses } from './utils/networks';
+
+/**
+ * Main ChaosChain SDK Class - Complete TypeScript implementation
+ * 
+ * Features:
+ * - ERC-8004 v1.0 on-chain identity, reputation, and validation
+ * - x402 crypto payments (USDC/ETH)
+ * - Traditional payments (cards, Google Pay, Apple Pay, PayPal)
+ * - Google AP2 intent verification
+ * - Process integrity with cryptographic proofs
+ * - Pluggable storage providers (IPFS, Pinata, Irys, 0G)
+ * - Pluggable compute providers
+ * - A2A-x402 extension for multi-payment support
+ * - HTTP 402 paywall server
+ */
+export class ChaosChainSDK {
+  // Core components
+  private walletManager: WalletManager;
+  private chaosAgent: ChaosAgent;
+  private x402PaymentManager?: X402PaymentManager;
+  private paymentManager?: PaymentManager;
+  private storageBackend: StorageBackend;
+  private computeProvider?: ComputeProvider;
+  private provider: ethers.Provider;
+
+  // Advanced integrations
+  public googleAP2?: GoogleAP2Integration;
+  public a2aX402Extension?: A2AX402Extension;
+  public processIntegrity?: ProcessIntegrity;
+
+  // Configuration
+  public readonly agentName: string;
+  public readonly agentDomain: string;
+  public readonly agentRole: AgentRole | string;
+  public readonly network: NetworkConfig | string;
+  public readonly networkInfo: ReturnType<typeof getNetworkInfo>;
+
+  // Current agent ID (set after registration)
+  private _agentId?: bigint;
+
+  constructor(config: ChaosChainSDKConfig) {
+    this.agentName = config.agentName;
+    this.agentDomain = config.agentDomain;
+    this.agentRole = config.agentRole;
+    this.network = config.network;
+
+    // Get network info
+    this.networkInfo = getNetworkInfo(config.network);
+
+    // Initialize provider
+    const rpcUrl = config.rpcUrl || this.networkInfo.rpcUrl;
+    this.provider = new ethers.JsonRpcProvider(rpcUrl);
+
+    // Initialize wallet
+    this.walletManager = new WalletManager(
+      {
+        privateKey: config.privateKey,
+        mnemonic: config.mnemonic,
+        walletFile: config.walletFile,
+      },
+      this.provider
+    );
+
+    // Initialize ChaosAgent (ERC-8004)
+    const contractAddresses = getContractAddresses(config.network);
+    this.chaosAgent = new ChaosAgent(
+      contractAddresses,
+      this.walletManager.getWallet(),
+      this.provider
+    );
+
+    // Initialize storage provider
+    if (config.storageProvider) {
+      this.storageBackend = config.storageProvider as StorageBackend;
+    } else if (config.enableStorage !== false) {
+      // Auto-detect available storage backends
+      this.storageBackend = new AutoStorageManager();
+    } else {
+      // Dummy storage provider
+      this.storageBackend = {
+        put: async () => ({ cid: '', provider: 'none' }),
+        get: async () => Buffer.from(''),
+      };
+    }
+
+    // Initialize payment managers (if enabled)
+    if (config.enablePayments !== false) {
+      // Crypto payments (x402)
+      this.x402PaymentManager = new X402PaymentManager(
+        this.walletManager.getWallet(),
+        typeof config.network === 'string' ? (config.network as NetworkConfig) : config.network
+      );
+
+      // Traditional + crypto payments (multi-method)
+      const paymentCredentials: PaymentMethodCredentials = {
+        stripe_secret_key: process.env.STRIPE_SECRET_KEY,
+        google_pay_merchant_id: process.env.GOOGLE_PAY_MERCHANT_ID,
+        apple_pay_merchant_id: process.env.APPLE_PAY_MERCHANT_ID,
+        paypal_client_id: process.env.PAYPAL_CLIENT_ID,
+        paypal_client_secret: process.env.PAYPAL_CLIENT_SECRET
+      };
+
+      this.paymentManager = new PaymentManager(
+        this.agentName,
+        typeof config.network === 'string' ? (config.network as NetworkConfig) : config.network,
+        this.walletManager.getWallet(),
+        paymentCredentials
+      );
+
+      // A2A-x402 Extension (multi-payment support)
+      this.a2aX402Extension = new A2AX402Extension(
+        this.agentName,
+        typeof config.network === 'string' ? (config.network as NetworkConfig) : config.network,
+        this.paymentManager
+      );
+    }
+
+    // Initialize Google AP2 (if enabled)
+    if (config.enableAP2 !== false) {
+      this.googleAP2 = new GoogleAP2Integration(
+        this.agentName,
+        process.env.GOOGLE_AP2_MERCHANT_PRIVATE_KEY
+      );
+    }
+
+    // Initialize Process Integrity (if enabled)
+    if (config.enableProcessIntegrity !== false) {
+      this.processIntegrity = new ProcessIntegrity(
+        this.storageBackend,
+        this.computeProvider
+      );
+    }
+
+    // Initialize compute provider (if provided)
+    this.computeProvider = config.computeProvider;
+
+    console.log(`🚀 ChaosChain SDK initialized for ${this.agentName}`);
+    console.log(`   Network: ${this.network}`);
+    console.log(`   Wallet: ${this.walletManager.getAddress()}`);
+    console.log(`   Features:`);
+    console.log(`     - ERC-8004: ✅`);
+    console.log(`     - x402 Payments: ${this.x402PaymentManager ? '✅' : '❌'}`);
+    console.log(`     - Multi-Payment: ${this.paymentManager ? '✅' : '❌'}`);
+    console.log(`     - Google AP2: ${this.googleAP2 ? '✅' : '❌'}`);
+    console.log(`     - Process Integrity: ${this.processIntegrity ? '✅' : '❌'}`);
+    console.log(`     - Storage: ✅`);
+  }
+
+  // ============================================================================
+  // ERC-8004 Identity Methods
+  // ============================================================================
+
+  /**
+   * Register agent identity on-chain
+   */
+  async registerIdentity(metadata?: AgentMetadata): Promise<AgentRegistration> {
+    const meta: AgentMetadata = metadata || {
+      name: this.agentName,
+      domain: this.agentDomain,
+      role: this.agentRole,
+    };
+
+    const registration = await this.chaosAgent.registerIdentity(meta);
+    this._agentId = registration.agentId;
+
+    console.log(`✅ Agent #${registration.agentId} registered on-chain`);
+    return registration;
+  }
+
+  /**
+   * Get agent metadata
+   */
+  async getAgentMetadata(agentId: bigint): Promise<AgentMetadata | null> {
+    return this.chaosAgent.getAgentMetadata(agentId);
+  }
+
+  /**
+   * Update agent metadata
+   */
+  async updateAgentMetadata(agentId: bigint, metadata: AgentMetadata): Promise<string> {
+    return this.chaosAgent.updateAgentMetadata(agentId, metadata);
+  }
+
+  /**
+   * Get current agent ID
+   */
+  getAgentId(): bigint | undefined {
+    return this._agentId;
+  }
+
+  // ============================================================================
+  // ERC-8004 Reputation Methods
+  // ============================================================================
+
+  /**
+   * Generate feedback authorization (EIP-191 signing)
+   */
+  async generateFeedbackAuthorization(
+    agentId: bigint,
+    clientAddress: string,
+    indexLimit: bigint,
+    expiry: bigint
+  ): Promise<string> {
+    return this.chaosAgent.generateFeedbackAuthorization(agentId, clientAddress, indexLimit, expiry);
+  }
+
+  /**
+   * Give feedback to an agent
+   */
+  async giveFeedback(params: FeedbackParams): Promise<string> {
+    return this.chaosAgent.giveFeedback(params);
+  }
+
+  /**
+   * Submit feedback with payment proof (ERC-8004 reputation enrichment)
+   */
+  async submitFeedbackWithPayment(
+    agentId: bigint,
+    score: number,
+    feedbackData: Record<string, any>,
+    paymentProof: Record<string, any>
+  ): Promise<{ feedbackTxHash: string; feedbackUri: string }> {
+    // Store feedback data with payment proof
+    const fullFeedbackData = {
+      ...feedbackData,
+      score,
+      proof_of_payment: paymentProof,
+      timestamp: new Date().toISOString()
+    };
+
+    // Upload to storage
+    const feedbackJson = JSON.stringify(fullFeedbackData);
+    const result = await this.storageBackend.put(Buffer.from(feedbackJson), 'application/json');
+    const feedbackUri = `ipfs://${result.cid}`;
+
+    // Submit feedback on-chain
+    const txHash = await this.chaosAgent.giveFeedback({
+      agentId,
+      rating: score,
+      feedbackUri
+    });
+
+    console.log(`✅ Feedback submitted with payment proof`);
+    console.log(`   TX: ${txHash}`);
+    console.log(`   URI: ${feedbackUri}`);
+
+    return { feedbackTxHash: txHash, feedbackUri };
+  }
+
+  /**
+   * Get agent reputation score
+   */
+  async getReputationScore(agentId: bigint): Promise<number> {
+    return this.chaosAgent.getReputationScore(agentId);
+  }
+
+  // ============================================================================
+  // ERC-8004 Validation Methods
+  // ============================================================================
+
+  /**
+   * Request validation from validator
+   */
+  async requestValidation(params: ValidationRequestParams): Promise<string> {
+    return this.chaosAgent.requestValidation(params);
+  }
+
+  /**
+   * Respond to validation request
+   */
+  async respondToValidation(
+    requestId: bigint,
+    approved: boolean,
+    responseUri: string
+  ): Promise<string> {
+    return this.chaosAgent.respondToValidation(requestId, approved, responseUri);
+  }
+
+  // ============================================================================
+  // x402 Crypto Payment Methods
+  // ============================================================================
+
+  /**
+   * Create x402 payment request
+   */
+  createX402PaymentRequest(
+    fromAgent: string,
+    toAgent: string,
+    amount: number,
+    currency: string = 'USDC',
+    serviceDescription: string = 'AI Agent Service'
+  ): Record<string, any> {
+    if (!this.x402PaymentManager) {
+      throw new Error('x402 payments not enabled');
+    }
+    return this.x402PaymentManager.createPaymentRequest(fromAgent, toAgent, amount, currency, serviceDescription);
+  }
+
+  /**
+   * Execute x402 crypto payment
+   */
+  async executeX402Payment(
+    paymentRequest: Record<string, any>,
+    recipientAddress: string
+  ): Promise<Record<string, any>> {
+    if (!this.x402PaymentManager) {
+      throw new Error('x402 payments not enabled');
+    }
+    return this.x402PaymentManager.executePayment(paymentRequest, recipientAddress);
+  }
+
+  /**
+   * Create x402 payment requirements (for receiving payments)
+   */
+  createX402PaymentRequirements(
+    amount: number,
+    currency: string = 'USDC',
+    serviceDescription: string = 'AI Agent Service',
+    expiryMinutes: number = 30
+  ): Record<string, any> {
+    if (!this.x402PaymentManager) {
+      throw new Error('x402 payments not enabled');
+    }
+    return this.x402PaymentManager.createPaymentRequirements(amount, currency, serviceDescription, expiryMinutes);
+  }
+
+  /**
+   * Create x402 paywall server
+   */
+  createX402PaywallServer(port: number = 8402): X402Server {
+    if (!this.x402PaymentManager) {
+      throw new Error('x402 payments not enabled');
+    }
+    return new X402Server(this.x402PaymentManager, { port });
+  }
+
+  /**
+   * Get x402 payment history
+   */
+  async getX402PaymentHistory(limit: number = 10): Promise<any[]> {
+    if (!this.x402PaymentManager) {
+      throw new Error('x402 payments not enabled');
+    }
+    return this.x402PaymentManager.getPaymentHistory(limit);
+  }
+
+  // ============================================================================
+  // Traditional Payment Methods (Cards, Google Pay, Apple Pay, PayPal)
+  // ============================================================================
+
+  /**
+   * Execute traditional payment
+   */
+  executeTraditionalPayment(
+    paymentMethod: PaymentMethod,
+    amount: number,
+    currency: string,
+    paymentData: Record<string, any>
+  ): Record<string, any> {
+    if (!this.paymentManager) {
+      throw new Error('Payment manager not enabled');
+    }
+    return this.paymentManager.executeTraditionalPayment(paymentMethod, amount, currency, paymentData);
+  }
+
+  /**
+   * Get supported payment methods
+   */
+  getSupportedPaymentMethods(): PaymentMethod[] {
+    if (!this.paymentManager) {
+      return [];
+    }
+    return this.paymentManager.getSupportedPaymentMethods();
+  }
+
+  /**
+   * Get payment methods status
+   */
+  getPaymentMethodsStatus(): Record<string, boolean> {
+    if (!this.paymentManager) {
+      return {};
+    }
+    return this.paymentManager.getPaymentMethodsStatus();
+  }
+
+  // ============================================================================
+  // Google AP2 Intent Verification Methods
+  // ============================================================================
+
+  /**
+   * Create Google AP2 intent mandate
+   */
+  createIntentMandate(
+    userDescription: string,
+    merchants?: string[],
+    skus?: string[],
+    requiresRefundability: boolean = false,
+    expiryMinutes: number = 60
+  ): GoogleAP2IntegrationResult {
+    if (!this.googleAP2) {
+      throw new Error('Google AP2 not enabled');
+    }
+    return this.googleAP2.createIntentMandate(userDescription, merchants, skus, requiresRefundability, expiryMinutes);
+  }
+
+  /**
+   * Create Google AP2 cart mandate with JWT signing
+   */
+  async createCartMandate(
+    cartId: string,
+    items: Array<{ name: string; price: number }>,
+    totalAmount: number,
+    currency: string = 'USD',
+    merchantName?: string,
+    expiryMinutes: number = 15
+  ): Promise<GoogleAP2IntegrationResult> {
+    if (!this.googleAP2) {
+      throw new Error('Google AP2 not enabled');
+    }
+    return this.googleAP2.createCartMandate(cartId, items, totalAmount, currency, merchantName, expiryMinutes);
+  }
+
+  /**
+   * Verify JWT token
+   */
+  async verifyJwtToken(token: string): Promise<Record<string, any>> {
+    if (!this.googleAP2) {
+      throw new Error('Google AP2 not enabled');
+    }
+    return this.googleAP2.verifyJwtToken(token);
+  }
+
+  // ============================================================================
+  // Process Integrity Methods
+  // ============================================================================
+
+  /**
+   * Register function for integrity verification
+   */
+  registerFunction(func: (...args: any[]) => Promise<any>): void {
+    if (!this.processIntegrity) {
+      throw new Error('Process integrity not enabled');
+    }
+    this.processIntegrity.registerFunction(func);
+  }
+
+  /**
+   * Execute function with integrity proof
+   */
+  async executeWithIntegrityProof(
+    functionName: string,
+    args: Record<string, any>
+  ): Promise<{ result: any; proof: Record<string, any> }> {
+    if (!this.processIntegrity) {
+      throw new Error('Process integrity not enabled');
+    }
+    return this.processIntegrity.executeWithProof(functionName, args);
+  }
+
+  /**
+   * Verify integrity proof
+   */
+  async verifyIntegrityProof(proof: Record<string, any>): Promise<boolean> {
+    if (!this.processIntegrity) {
+      throw new Error('Process integrity not enabled');
+    }
+    return this.processIntegrity.verifyProof(proof);
+  }
+
+  // ============================================================================
+  // Storage Methods
+  // ============================================================================
+
+  /**
+   * Upload data to storage
+   */
+  async upload(data: any, options?: UploadOptions): Promise<UploadResult> {
+    const jsonData = typeof data === 'string' ? data : JSON.stringify(data);
+    const buffer = Buffer.from(jsonData);
+
+    const result = await this.storageBackend.put(buffer, 'application/json');
+
+    return {
+      cid: result.cid,
+      uri: result.url || `ipfs://${result.cid}`
+    };
+  }
+
+  /**
+   * Download data from storage
+   */
+  async download(cid: string): Promise<any> {
+    const buffer = await this.storageBackend.get(cid);
+    const data = buffer.toString('utf-8');
+
+    try {
+      return JSON.parse(data);
+    } catch {
+      return data;
+    }
+  }
+
+  /**
+   * Store evidence (convenience method)
+   */
+  async storeEvidence(evidenceData: Record<string, any>): Promise<string> {
+    const result = await this.upload(evidenceData);
+    console.log(`📦 Stored evidence: ${result.cid}`);
+    return result.cid;
+  }
+
+  // ============================================================================
+  // Wallet & Network Methods
+  // ============================================================================
+
+  /**
+   * Get wallet address
+   */
+  getAddress(): string {
+    return this.walletManager.getAddress();
+  }
+
+  /**
+   * Get wallet balance
+   */
+  async getBalance(): Promise<string> {
+    return this.walletManager.getBalance();
+  }
+
+  /**
+   * Get network info
+   */
+  getNetworkInfo() {
+    return this.networkInfo;
+  }
+
+  /**
+   * Get SDK capabilities summary
+   */
+  getCapabilities(): Record<string, any> {
+    return {
+      agent_name: this.agentName,
+      agent_domain: this.agentDomain,
+      agent_role: this.agentRole,
+      network: this.network,
+      wallet_address: this.walletManager.getAddress(),
+      agent_id: this._agentId?.toString(),
+      features: {
+        erc_8004_identity: true,
+        erc_8004_reputation: true,
+        erc_8004_validation: true,
+        x402_crypto_payments: !!this.x402PaymentManager,
+        traditional_payments: !!this.paymentManager,
+        google_ap2_intents: !!this.googleAP2,
+        process_integrity: !!this.processIntegrity,
+        storage: true,
+        compute: !!this.computeProvider
+      },
+      supported_payment_methods: this.paymentManager ? this.paymentManager.getSupportedPaymentMethods() : [],
+      storage_backends: this.storageBackend instanceof AutoStorageManager 
+        ? (this.storageBackend as AutoStorageManager).getAvailableBackends() 
+        : [this.storageBackend.constructor.name]
+    };
+  }
+}
