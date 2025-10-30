@@ -11,5 +11,6 @@ sdk
 *.md
 !README.md
 !CONTRIBUTING.md
+!docs/*.md
 
 keys
