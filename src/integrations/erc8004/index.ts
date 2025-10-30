@@ -43,10 +43,12 @@ export interface ReputationFeedback {
  * ERC-8004 Client for BSC Testnet
  */
 export class ERC8004Client {
-  private identityContract: ethers.Contract;
-  private reputationContract: ethers.Contract;
-  private validationContract: ethers.Contract;
-  private provider: ethers.Provider;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private identityContract: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private reputationContract: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private validationContract: any;
   private signer?: ethers.Signer;
 
   /**
@@ -60,7 +62,6 @@ export class ERC8004Client {
     addresses = BSC_TESTNET_ADDRESSES,
     signer?: ethers.Signer
   ) {
-    this.provider = provider;
     this.signer = signer;
 
     // Initialize read-only contracts
