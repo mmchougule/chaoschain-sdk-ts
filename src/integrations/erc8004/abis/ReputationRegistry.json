@@ -1,0 +1,28 @@
+[
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "agentId", "type": "uint256" },
+      { "internalType": "uint8", "name": "score", "type": "uint8" },
+      { "internalType": "string[]", "name": "tags", "type": "string[]" },
+      { "internalType": "string", "name": "uri", "type": "string" },
+      { "internalType": "bytes32", "name": "hash", "type": "bytes32" },
+      { "internalType": "bytes", "name": "auth", "type": "bytes" }
+    ],
+    "name": "giveFeedback",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "uint256", "name": "agentId", "type": "uint256" }],
+    "name": "getFeedbackSummary",
+    "outputs": [
+      { "internalType": "uint256", "name": "count", "type": "uint256" },
+      { "internalType": "uint256", "name": "avgScore", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  { "name": "revokeFeedback", "inputs": [], "outputs": [], "stateMutability": "nonpayable", "type": "function" },
+  { "name": "getIdentityRegistry", "inputs": [], "outputs": [{ "internalType": "address", "name": "", "type": "address" }], "stateMutability": "view", "type": "function" }
+]
