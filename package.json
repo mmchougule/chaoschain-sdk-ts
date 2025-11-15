@@ -7,19 +7,20 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
     },
     "./providers/storage": {
-      "types": "./dist/providers/storage/index.d.ts",
       "import": "./dist/providers/storage/index.mjs",
       "require": "./dist/providers/storage/index.js"
     },
     "./providers/compute": {
-      "types": "./dist/providers/compute/index.d.ts",
       "import": "./dist/providers/compute/index.mjs",
       "require": "./dist/providers/compute/index.js"
+    },
+    "./integrations/erc8004": {
+      "import": "./dist/integrations/erc8004/index.mjs",
+      "require": "./dist/integrations/erc8004/index.js"
     }
   },
   "files": [

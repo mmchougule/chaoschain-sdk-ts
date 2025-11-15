@@ -1,0 +1,34 @@
+[
+  {
+    "inputs": [
+      { "internalType": "address", "name": "to", "type": "address" },
+      { "internalType": "string", "name": "uri", "type": "string" }
+    ],
+    "name": "register",
+    "outputs": [{ "internalType": "uint256", "name": "agentId", "type": "uint256" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "agentId", "type": "uint256" },
+      { "internalType": "string", "name": "key", "type": "string" },
+      { "internalType": "string", "name": "value", "type": "string" }
+    ],
+    "name": "setMetadata",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "uint256", "name": "agentId", "type": "uint256" }, { "internalType": "string", "name": "key", "type": "string" }],
+    "name": "getMetadata",
+    "outputs": [{ "internalType": "string", "name": "", "type": "string" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  { "name": "name", "inputs": [], "outputs": [{ "type": "string", "name": "" }], "stateMutability": "view", "type": "function" },
+  { "name": "symbol", "inputs": [], "outputs": [{ "type": "string", "name": "" }], "stateMutability": "view", "type": "function" },
+  { "name": "supportsInterface", "inputs": [{ "type": "bytes4", "name": "interfaceID" }], "outputs": [{ "type": "bool", "name": "" }], "stateMutability": "view", "type": "function" },
+  { "name": "ownerOf", "inputs": [{ "type": "uint256", "name": "tokenId" }], "outputs": [{ "type": "address", "name": "" }], "stateMutability": "view", "type": "function" }
+]

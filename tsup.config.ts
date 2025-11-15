@@ -4,7 +4,8 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'providers/storage/index': 'src/providers/storage/index.ts',
-    'providers/compute/index': 'src/providers/compute/index.ts'
+    'providers/compute/index': 'src/providers/compute/index.ts',
+    'integrations/erc8004/index': 'src/integrations/erc8004/index.ts'
   },
   format: ['cjs', 'esm'],
   dts: false,
